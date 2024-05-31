@@ -1,8 +1,8 @@
 import 'dart:math' as math;
+import 'dart:math';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 
 import 'animated_background.dart';
 import 'image_helper.dart';
@@ -22,6 +22,10 @@ class _NotSetImageProvider extends ImageProvider<_NotSetImageProvider> {
 
 /// Holds the particle configuration information for a [ParticleBehaviour].
 class ParticleOptions {
+  final Shader? shader;
+  final MaskFilter? maskFilter;
+  final double spreadRadius;
+
   /// The image used by the particle. It is mutually exclusive with [baseColor].
   final Image? image;
 
@@ -84,6 +88,9 @@ class ParticleOptions {
     this.maxOpacity = 0.4,
     this.opacityChangeRate = 0.25,
     this.particleCount = 100,
+    this.shader,
+    this.maskFilter,
+    this.spreadRadius = 1.0,
   })  : assert(spawnMaxRadius >= spawnMinRadius),
         assert(spawnMinRadius >= 1.0),
         assert(spawnMaxRadius >= 1.0),
@@ -113,6 +120,8 @@ class ParticleOptions {
     double? maxOpacity,
     double? opacityChangeRate,
     int? particleCount,
+    Shader? shader,
+    MaskFilter? maskFilter,
   }) {
     return ParticleOptions(
       image: image is _NotSetImage ? this.image : image,
@@ -126,12 +135,17 @@ class ParticleOptions {
       maxOpacity: maxOpacity ?? this.maxOpacity,
       opacityChangeRate: opacityChangeRate ?? this.opacityChangeRate,
       particleCount: particleCount ?? this.particleCount,
+      shader: shader ?? this.shader,
+      maskFilter: maskFilter ?? this.maskFilter,
     );
   }
 }
 
 /// Holds the information of a particle used in a [ParticleBehaviour].
 class Particle {
+  Shader? shader;
+  MaskFilter? maskFilter;
+
   /// The X coordinate of the center of this particle.
   double cx = 0.0;
 
@@ -246,8 +260,7 @@ abstract class ParticleBehaviour extends Behaviour {
 
     if (_options!.image == null)
       _particleImage = null;
-    else if (_particleImage == null || oldOptions!.image != _options!.image)
-      _convertImage(_options!.image!);
+    else if (_particleImage == null || oldOptions!.image != _options!.image) _convertImage(_options!.image!);
 
     onOptionsUpdate(oldOptions);
   }
@@ -307,6 +320,14 @@ abstract class ParticleBehaviour extends Behaviour {
       if (particle.alpha == 0.0) continue;
       _paint!.color = options.baseColor.withOpacity(particle.alpha);
 
+      // Use the Shader and MaskFilter from the particle when drawing the circle or image
+      if (particle.shader != null) {
+        _paint!.shader = particle.shader;
+      }
+      if (particle.maskFilter != null) {
+        _paint!.maskFilter = particle.maskFilter;
+      }
+
       if (_particleImage != null) {
         Rect dst = Rect.fromLTRB(
           particle.cx - particle.radius,
@@ -315,12 +336,17 @@ abstract class ParticleBehaviour extends Behaviour {
           particle.cy + particle.radius,
         );
         canvas.drawImageRect(_particleImage!, _particleImageSrc!, dst, _paint!);
-      } else
+      } else {
         canvas.drawCircle(
           Offset(particle.cx, particle.cy),
           particle.radius,
           _paint!,
         );
+      }
+
+      // Reset the Shader and MaskFilter after drawing the circle or image
+      _paint!.shader = null;
+      _paint!.maskFilter = null;
     }
   }
 
@@ -344,17 +370,12 @@ abstract class ParticleBehaviour extends Behaviour {
   void updateParticle(Particle particle, double delta, Duration elapsed) {
     particle.cx += particle.dx * delta;
     particle.cy += particle.dy * delta;
-    if (options.opacityChangeRate > 0 &&
-            particle.alpha < particle.targetAlpha ||
-        options.opacityChangeRate < 0 &&
-            particle.alpha > particle.targetAlpha) {
+    if (options.opacityChangeRate > 0 && particle.alpha < particle.targetAlpha ||
+        options.opacityChangeRate < 0 && particle.alpha > particle.targetAlpha) {
       particle.alpha = particle.alpha + delta * options.opacityChangeRate;
 
-      if (options.opacityChangeRate > 0 &&
-              particle.alpha > particle.targetAlpha ||
-          options.opacityChangeRate < 0 &&
-              particle.alpha < particle.targetAlpha)
-        particle.alpha = particle.targetAlpha;
+      if (options.opacityChangeRate > 0 && particle.alpha > particle.targetAlpha ||
+          options.opacityChangeRate < 0 && particle.alpha < particle.targetAlpha) particle.alpha = particle.targetAlpha;
     }
   }
 
@@ -417,13 +438,30 @@ class RandomParticleBehaviour extends ParticleBehaviour {
     final double deltaOpacity = (options.maxOpacity - options.minOpacity);
     p.alpha = options.spawnOpacity;
     p.targetAlpha = random.nextDouble() * deltaOpacity + options.minOpacity;
+
+    // Assign a Shader and MaskFilter to the particle
+    if (options.shader != null) {
+      p.shader = options.shader;
+    }
+
+    if (options.maskFilter != null) {
+      p.maskFilter = options.maskFilter;
+    }
   }
 
   /// Initializes a new position for the provided [Particle].
   @protected
   void initPosition(Particle p) {
-    p.cx = random.nextDouble() * size!.width;
-    p.cy = random.nextDouble() * size!.height;
+    double angle = random.nextDouble() * (2 * pi);
+    double distance = random.nextDouble() * options.spreadRadius;
+
+    // Generate a random y position that is more likely to be in the top or bottom part of the screen
+    double yPosition = random.nextBool()
+        ? random.nextDouble() * (size!.height / 4) // Top part of the screen
+        : size!.height - (random.nextDouble() * (size!.height / 4)); // Bottom part of the screen
+
+    p.cx = size!.width / 2 + distance * cos(angle);
+    p.cy = yPosition;
   }
 
   /// Initializes a new radius for the provided [Particle].
@@ -460,8 +498,7 @@ class RandomParticleBehaviour extends ParticleBehaviour {
 
       // TODO: handle opacity change
 
-      if (p.radius < options.spawnMinRadius ||
-          p.radius > options.spawnMaxRadius) initRadius(p);
+      if (p.radius < options.spawnMinRadius || p.radius > options.spawnMaxRadius) initRadius(p);
     }
   }
 }
